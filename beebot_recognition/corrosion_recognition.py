@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
 from torchvision import transforms
-
+from torchvision.models.segmentation import deeplabv3_resnet101 as deeplabv3_resnet101
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(DoubleConv, self).__init__()
@@ -122,6 +122,23 @@ class BeebotRecognition(Node):
                 output = (output > 0.5).float()
             img_writen = self.cv_bridge.cv2_to_imgmsg(np.array(output), encoding='rgb8')
             self.publisher_.publish(img_writen)
+        
+        elif self.network_model == 'deeplab':
+            preprocess = transforms.Compose([
+                transforms.Resize((512, 512)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0,0,0], std=[1,1,1], )
+            ])
+            img = self.cv_bridge.imgmsg_to_cv2(msg,desired_encoding='bgr8')
+            image = preprocess(img)
+            image = image.unsqueeze(0)
+            with torch.no_grad():
+                output = self.model(image)['out']
+                output = torch.sigmoid(output)
+                output = (output > 0.5).float()
+            img_writen = self.cv_bridge.cv2_to_imgmsg(np.array(output), encoding='rgb8')
+            self.publisher_.publish(img_writen)
             
     def loadCVBrige(self):
         self.cv_bridge = CvBridge()
@@ -154,6 +171,16 @@ class BeebotRecognition(Node):
             self.model = UNET(in_channels=3, out_channels=1).to(DEVICE)
             weight = torch.load(self.network_weight_path, map_location=torch.device(DEVICE))
             self.model.load_state_dict(weight["state_dict"])
+        
+        elif self.network_model == "deeplab":
+            self.get_logger().info("=> Loading deeplab weight")
+            DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+            self.model = deeplabv3_resnet101(num_classes=1)
+            
+            checkpoint = torch.load(self.network_weight_path)
+            self.model.load_state_dict(checkpoint['state_dict'])
+            self.model.to(DEVICE)
+            self.model.eval()
 
 def main(args=None):
     rclpy.init(args=args)
